@@ -8,11 +8,3 @@ The library leverages the power of the Fast Fourier Transform (FFT) to perform c
 To fully utilize modern multi-core processors, kernel-flow parallelizes the FFT computation using OpenMP. This allows multiple threads to work concurrently, reducing the time required to compute convolutions.
 3. Optional Integration with CUDA
 For users seeking even greater performance, kernel-flow offers optional integration with CUDA. By leveraging the power of GPUs, users can offload FFT computations to the GPU, drastically reducing the time needed for large convolution operations.
-
-The installation instructions will be provided once the library is finalized and ready for release.
-
-Contributions
-We welcome contributions! If you are interested in helping us improve kernel-flow, feel free to open issues, submit pull requests, or reach out to the development team.
-
-License
-This project is licensed under the MIT License. See the LICENSE file for more details.
