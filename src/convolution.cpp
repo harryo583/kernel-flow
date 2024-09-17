@@ -2,229 +2,325 @@
 #include <vector>
 #include <fftw3.h>
 #include "FFTWrapper.h"
+#include <iomanip>
 
 enum class Padding {
+    VALID,      // no padding
     ZERO,       // pads the image or feature map with zeros
     CONSTANT,   // pads with a user-specified constant
-    SAME,       // ensures that the output size is the same as the input size
     REPLICATE,  // pads by replicating the edge pixels of the image or feature map
     REFLECT,    // pads by reflecting border pixels
 };
 
 // 1D Padding function
-static void pad1D(const std::vector<float>& input, std::vector<float>& output, Padding padding) {
-    int len = input.size();         // length of input
-    int klen = output.size() - len; // length of kernel
+static void pad1D(const std::vector<float>& input,
+                  std::vector<float>& output,
+                  Padding padding,
+                  float pad_val = 0.0) {
+    int len = input.size();
+    int klen = output.size() - len;
+    int pad_left = klen / 2;
+    int pad_right = klen - pad_left;
 
+    // Copy input data
+    for (int i = 0; i < len; i++) output[pad_left + i] = input[i];
+
+    // Apply padding
     if (padding == Padding::ZERO) {
-        return;
+        std::fill(output.begin(), output.begin() + pad_left, 0);
+        std::fill(output.end() - pad_right, output.end(), 0);
+    } else if (padding == Padding::CONSTANT) {
+        std::fill(output.begin(), output.begin() + pad_left, pad_val);
+        std::fill(output.end() - pad_right, output.end(), pad_val);
     } else if (padding == Padding::REPLICATE) {
-        for (int i = 0; i < len; ++i) {
-            output[klen / 2 + i] = input[i];
-        }
-        output[0] = input[0];
-        output[output.size() - 1] = input[len - 1];
-        return;
+        std::fill(output.begin(), output.begin() + pad_left, input[0]);
+        std::fill(output.end() - pad_right, output.end(), input[len - 1]);
     } else if (padding == Padding::REFLECT) {
-        // Reflect padding
-        for (int i = 0; i < len; ++i) {
-            output[klen / 2 + i] = input[i];
-        }
-        for (int i = 0; i < klen / 2; ++i) {
-            output[i] = input[klen / 2 - i];
-            output[output.size() - 1 - i] = input[len - 1 - i];
-        }
+        for (int i = 0; i < pad_left; i++) output[i] = input[pad_left - i - 1];
+        for (int i = 0; i < pad_right; i++) output[output.size() - 1 - i] = input[len - pad_right + i];
     } else {
         throw std::invalid_argument("Unsupported padding type");
     }
 }
 
 // 2D Padding function
-static void pad2D(const std::vector<std::vector<float>>& input, std::vector<std::vector<float>>& output, Padding padding) {
-    int rows = input.size();               // height of input image
-    int cols = input[0].size();            // width of input image
-    int krows = output.size() - rows;      // height of kernel
-    int kcols = output[0].size() - cols;   // width of kernel
+static void pad2D(const std::vector<std::vector<float>>& input, 
+                  std::vector<std::vector<float>>& output, 
+                  Padding padding, float pad_val = 0.0) {
+    int rows = input.size();
+    int cols = input[0].size();
+    int krows = output.size() - rows;
+    int kcols = output[0].size() - cols;
+    int pad_top = krows / 2;
+    int pad_left = kcols / 2;
 
+    // Copy input data
+    for (int i = 0; i < rows; i++) {
+        for (int j = 0; j < cols; j++) {
+            output[pad_top + i][pad_left + j] = input[i][j];
+        }
+    }
+
+    // Apply padding
     if (padding == Padding::ZERO) {
-        return;
+        for (std::vector<std::vector<float>>::size_type i = 0; i < output.size(); i++) {
+            for (std::vector<float>::size_type j = 0; j < output[i].size(); j++) {
+                if (i < pad_top || i >= rows + pad_top || j < pad_left || j >= cols + pad_left) {
+                    output[i][j] = 0;
+                }
+            }
+        }
+    } else if (padding == Padding::CONSTANT) {
+        for (std::vector<std::vector<float>>::size_type i = 0; i < output.size(); i++) {
+            for (std::vector<float>::size_type j = 0; j < output[i].size(); j++) {
+                if (i < pad_top || i >= rows + pad_top || j < pad_left || j >= cols + pad_left) {
+                    output[i][j] = pad_val;
+                }
+            }
+        }
     } else if (padding == Padding::REPLICATE) {
-        for (int i = 0; i < rows; ++i) {
-            for (int j = 0; j < cols; ++j) {
-                output[krows / 2 + i][kcols / 2 + j] = input[i][j];
+        for (int i = 0; i < pad_top; i++) {
+            for (std::vector<float>::size_type j = 0; j < output[0].size(); j++) {
+                output[i][j] = input[0][j];
+                output[output.size() - 1 - i][j] = input[rows - 1][j];
             }
         }
-        // Replicate edges (top and bottom rows)
-        for (int j = 0; j < output[0].size(); ++j) {
-            output[0][j] = output[krows / 2][j];
-            output[output.size() - 1][j] = output[output.size() - krows / 2 - 1][j];
+        for (int j = 0; j < pad_left; j++) {
+            for (std::vector<std::vector<float>>::size_type i = 0; i < output.size(); i++) {
+                output[i][j] = input[i][0];
+                output[i][output[0].size() - 1 - j] = input[i][cols - 1];
+            }
         }
-        // Replicate edges (left and right columns)
-        for (int i = 0; i < output.size(); ++i) {
-            output[i][0] = output[i][kcols / 2];
-            output[i][output[0].size() - 1] = output[i][output[0].size() - kcols / 2 - 1];
-        }
-        return;
     } else if (padding == Padding::REFLECT) {
-        for (int i = 0; i < rows; ++i) {
-            for (int j = 0; j < cols; ++j) {
-                output[krows / 2 + i][kcols / 2 + j] = input[i][j];
+        for (int i = 0; i < pad_top; i++) {
+            for (std::vector<float>::size_type j = 0; j < output[0].size(); j++) {
+                output[i][j] = input[pad_top - i - 1][j];
+                output[output.size() - 1 - i][j] = input[rows - pad_top + i][j];
             }
         }
-        // Reflect edges (top and bottom rows)
-        for (int j = 0; j < output[0].size(); ++j) {
-            output[0][j] = output[1][j];
-            output[output.size() - 1][j] = output[output.size() - 2][j];
+        for (int j = 0; j < pad_left; j++) {
+            for (std::vector<std::vector<float>>::size_type i = 0; i < output.size(); i++) {
+                output[i][j] = input[i][pad_left - j - 1];
+                output[i][output[0].size() - 1 - j] = input[i][cols - pad_left + j];
+            }
         }
-        // Reflect edges (left and right columns)
-        for (int i = 0; i < output.size(); ++i) {
-            output[i][0] = output[i][1];
-            output[i][output[0].size() - 1] = output[i][output[0].size() - 2];
-        }
-        return;
     } else {
         throw std::invalid_argument("Unsupported padding type");
     }
 }
 
-// Main 2D convolution using FFT
-std::vector<std::vector<float>> convolve(const std::vector<std::vector<float>>& image, const std::vector<std::vector<float>>& kernel, int stride, Padding padding) {
+
+static void convolve1D(const std::vector<float>& input_signal, 
+                       const std::vector<float>& kernel,
+                       std::vector<float>& output_signal,
+                       FFTWrapper& fftWrapper) {
+    int signal_size = input_signal.size();
+    int kernel_size = kernel.size();
+
+    int padded_size = signal_size + kernel_size - 1;
+
+    std::vector<float> padded_signal(padded_size, 0);
+    std::vector<float> padded_kernel(padded_size, 0);
+
+    // Copy signal and kernel
+    std::copy(input_signal.begin(), input_signal.end(), padded_signal.begin());
+    std::copy(kernel.begin(), kernel.end(), padded_kernel.begin());
+
+    std::vector<std::complex<float>> fft_signal(padded_size);
+    std::vector<std::complex<float>> fft_kernel(padded_size);
+    std::vector<std::complex<float>> fft_result(padded_size);
+
+    fftWrapper.performFFT1D(padded_signal, fft_signal, Flags::ESTIMATE);
+    fftWrapper.performFFT1D(padded_kernel, fft_kernel, Flags::ESTIMATE);
+
+    for (int i = 0; i < padded_size; ++i) {
+        fft_result[i] = fft_signal[i] * fft_kernel[i];
+    }
+
+    fftWrapper.performInverseFFT1D(fft_result, output_signal, Flags::ESTIMATE);
+}
+
+static void convolve2D(const std::vector<std::vector<float>>& input_image,
+                       const std::vector<std::vector<float>>& kernel,
+                       std::vector<std::vector<float>>& output_image,
+                       FFTWrapper& fftWrapper) {
+    int image_rows = input_image.size();
+    int image_cols = input_image[0].size();
+    int kernel_rows = kernel.size();
+    int kernel_cols = kernel[0].size();
+
+    int padded_rows = image_rows + kernel_rows - 1;
+    int padded_cols = image_cols + kernel_cols - 1;
+
+    std::vector<std::vector<float>> padded_image(padded_rows, std::vector<float>(padded_cols, 0));
+    std::vector<std::vector<float>> padded_kernel(padded_rows, std::vector<float>(padded_cols, 0));
+
+    // Copy image and kernel
+    for (int i = 0; i < image_rows; ++i) {
+        for (int j = 0; j < image_cols; ++j) {
+            padded_image[i + (kernel_rows - 1) / 2][j + (kernel_cols - 1) / 2] = input_image[i][j];
+        }
+    }
+
+    for (int i = 0; i < kernel_rows; ++i) {
+        for (int j = 0; j < kernel_cols; ++j) {
+            padded_kernel[i][j] = kernel[kernel_rows - i - 1][kernel_cols - j - 1];
+        }
+    }
+
+    std::vector<std::vector<std::complex<float>>> fft_image(padded_rows, std::vector<std::complex<float>>(padded_cols));
+    std::vector<std::vector<std::complex<float>>> fft_kernel(padded_rows, std::vector<std::complex<float>>(padded_cols));
+    std::vector<std::vector<std::complex<float>>> fft_result(padded_rows, std::vector<std::complex<float>>(padded_cols));
+
+    for (int i = 0; i < padded_rows; ++i) {
+        fftWrapper.performFFT1D(padded_image[i], fft_image[i], Flags::ESTIMATE);
+        fftWrapper.performFFT1D(padded_kernel[i], fft_kernel[i], Flags::ESTIMATE);
+    }
+
+    for (int i = 0; i < padded_rows; ++i) {
+        for (int j = 0; j < padded_cols; ++j) {
+            fft_result[i][j] = fft_image[i][j] * fft_kernel[i][j];
+        }
+    }
+
+    for (int i = 0; i < padded_rows; ++i) {
+        fftWrapper.performInverseFFT1D(fft_result[i], output_image[i], Flags::ESTIMATE);
+    }
+}
+
+
+// Overloaded function for 1D convolution
+std::vector<float> convolve(const std::vector<float>& signal,
+                            const std::vector<float>& kernel,
+                            int stride,
+                            Padding padding,
+                            float pad_val = 0.0) {
+    
+    FFTWrapper fftWrapper;
+
+    int input_size = signal.size();
+    int kernel_size = kernel.size();
+
+    if (padding != Padding::VALID) {
+        int padded_size = input_size + kernel_size - 1;
+        std::vector<float> padded_input(padded_size, 0);
+        std::vector<float> output_signal(input_size);
+        pad1D(signal, padded_input, padding, pad_val);
+        convolve1D(padded_input, kernel, output_signal, fftWrapper);
+        return output_signal;
+    } else {
+        auto padded_input = signal;
+        std::vector<float> output_signal(input_size - kernel_size + 1);
+        convolve1D(padded_input, kernel, output_signal, fftWrapper);
+        return output_signal;
+    }
+}
+
+// Overloaded function for 2D convolution
+std::vector<std::vector<float>> convolve(const std::vector<std::vector<float>>& image,
+                                         const std::vector<std::vector<float>>& kernel,
+                                         int stride,
+                                         Padding padding,
+                                         float pad_val = 0.0) {
+
     int image_rows = image.size();
     int image_cols = image[0].size();
     int kernel_rows = kernel.size();
     int kernel_cols = kernel[0].size();
     
-    int padded_rows = image_rows + kernel_rows - 1;
-    int padded_cols = image_cols + kernel_cols - 1;
-    
-    std::vector<std::vector<float>> padded_image(padded_rows, std::vector<float>(padded_cols, 0));
-    pad2D(image, padded_image, padding);
-    std::vector<std::vector<float>> output_image(image_rows, std::vector<float>(image_cols, 0));
-    
+    if (padding != Padding::VALID) {
+        int padded_rows = image_rows + kernel_rows - 1;
+        int padded_cols = image_cols + kernel_cols - 1;
+        
+        std::vector<std::vector<float>> padded_image(padded_rows, std::vector<float>(padded_cols, 0));
+        std::vector<std::vector<float>> output_image(image_rows, std::vector<float>(image_cols, 0));
+        pad2D(image, padded_image, padding, pad_val);
+        FFTWrapper fftWrapper;
+        convolve2D(padded_image, kernel, output_image, fftWrapper);
+        return output_image;
+    } else {
+        auto padded_image = image;
+        std::vector<std::vector<float>> output_image(image_rows - kernel_rows + 1, std::vector<float>(image_cols - kernel_cols + 1, 0));
+        FFTWrapper fftWrapper;
+        convolve2D(padded_image, kernel, output_image, fftWrapper);
+        return output_image;
+    }
+}
+
+
+
+
+// Function to print a 1D vector
+void print1DVector(const std::vector<float>& vec) {
+    for (const auto& val : vec) {
+        std::cout << std::fixed << std::setprecision(2) << val << " ";
+    }
+    std::cout << std::endl;
+}
+
+// Function to print a 2D vector
+void print2DVector(const std::vector<std::vector<float>>& mat) {
+    for (const auto& row : mat) {
+        for (const auto& val : row) {
+            std::cout << std::fixed << std::setprecision(2) << val << " ";
+        }
+        std::cout << std::endl;
+    }
+}
+
+int main() {
     FFTWrapper fftWrapper;
 
-    convolve2D(padded_image, kernel, output_image, fftWrapper);
-
-    return output_image;
-}
-
-
-static void convolve1D(const std::vector<float>& input_signal, 
-                       const std::vector<float>& kernel, 
-                       std::vector<float>& output_signal, 
-                       FFTWrapper& fftWrapper) 
-{
-    int input_size = input_signal.size();
-    int kernel_size = kernel.size();
+    // Test 1D Convolution
+    std::vector<float> signal = {1, 2, 3, 4};
+    std::vector<float> kernel = {1, 0, -1};
     
-    // Determine the padded size (usually the next power of two for efficient FFT)
-    int padded_size = input_size + kernel_size - 1;
+    std::cout << "1D Convolution Test:" << std::endl;
 
-    // Prepare FFTW complex arrays for the input and kernel
-    fftwf_complex *in_signal = (fftwf_complex*)fftwf_malloc(sizeof(fftwf_complex) * padded_size);
-    fftwf_complex *in_kernel = (fftwf_complex*)fftwf_malloc(sizeof(fftwf_complex) * padded_size);
-    fftwf_complex *out_signal = (fftwf_complex*)fftwf_malloc(sizeof(fftwf_complex) * padded_size);
+    std::vector<float> output_signal = convolve(signal, kernel, 1, Padding::ZERO);
+    std::cout << "Output with ZERO padding:" << std::endl;
+    print1DVector(output_signal);
 
-    std::vector<float> padded_input(padded_size, 0);
-    std::vector<float> padded_kernel(padded_size, 0);
-    
-    for (int i = 0; i < input_size; ++i) {
-        padded_input[i] = input_signal[i];
-    }
-    
-    for (int i = 0; i < kernel_size; ++i) {
-        padded_kernel[i] = kernel[i];
-    }
+    output_signal = convolve(signal, kernel, 1, Padding::CONSTANT, 2.0);
+    std::cout << "Output with CONSTANT padding (value 2.0):" << std::endl;
+    print1DVector(output_signal);
 
-    // Perform FFT on the padded input and kernel
-    if (fftWrapper.performFFT1D(padded_input.data(), in_signal, padded_size, Flags::FFTW_ESTIMATE) != FFTStatus::SUCCESS) {
-        throw std::runtime_error("FFT failed for input");
-    }
-    if (fftWrapper.performFFT1D(padded_kernel.data(), in_kernel, padded_size, Flags::FFTW_ESTIMATE) != FFTStatus::SUCCESS) {
-        throw std::runtime_error("FFT failed for kernel");
-    }
+    output_signal = convolve(signal, kernel, 1, Padding::REPLICATE);
+    std::cout << "Output with REPLICATE padding:" << std::endl;
+    print1DVector(output_signal);
 
-    // Perform element-wise multiplication in frequency domain
-    for (int i = 0; i < padded_size; ++i) {
-        out_signal[i][0] = in_signal[i][0] * in_kernel[i][0] - in_signal[i][1] * in_kernel[i][1];
-        out_signal[i][1] = in_signal[i][0] * in_kernel[i][1] + in_signal[i][1] * in_kernel[i][0];
-    }
+    output_signal = convolve(signal, kernel, 1, Padding::REFLECT);
+    std::cout << "Output with REFLECT padding:" << std::endl;
+    print1DVector(output_signal);
 
-    // Perform inverse FFT
-    std::vector<float> convolved_signal(padded_size, 0);
-    if (fftWrapper.performInverseFFT1D(out_signal, convolved_signal.data(), padded_size, Flags::FFTW_ESTIMATE) != FFTStatus::SUCCESS) {
-        throw std::runtime_error("Inverse FFT failed");
-    }
+    // Test 2D Convolution
+    std::vector<std::vector<float>> image = {
+        {1, 2, 3},
+        {4, 5, 6},
+        {7, 8, 9}
+    };
+    std::vector<std::vector<float>> kernel2D = {
+        {1, 0},
+        {-1, 1}
+    };
 
-    // Crop the result to the expected output size
-    output_signal.resize(input_size);
-    for (int i = 0; i < input_size; ++i) {
-        output_signal[i] = convolved_signal[i];
-    }
+    std::cout << "\n2D Convolution Test:" << std::endl;
 
-    fftwf_free(in_signal);
-    fftwf_free(in_kernel);
-    fftwf_free(out_signal);
-}
+    std::vector<std::vector<float>> output_image = convolve(image, kernel2D, 1, Padding::ZERO);
+    std::cout << "Output with ZERO padding:" << std::endl;
+    print2DVector(output_image);
 
-static void convolve2D(const std::vector<std::vector<float>>& padded_image,
-                       const std::vector<std::vector<float>>& kernel,
-                       std::vector<std::vector<float>>& output_image,
-                       FFTWrapper& fftWrapper)
-{
-    int padded_rows = padded_image.size();
-    int padded_cols = padded_image[0].size();
-    int krows = kernel.size();
-    int kcols = kernel[0].size();
+    output_image = convolve(image, kernel2D, 1, Padding::CONSTANT, 2.0);
+    std::cout << "Output with CONSTANT padding (value 2.0):" << std::endl;
+    print2DVector(output_image);
 
-    // Prepare FFTW complex arrays for the image and kernel
-    fftwf_complex *in_image = (fftwf_complex*)fftwf_malloc(sizeof(fftwf_complex) * padded_rows * padded_cols);
-    fftwf_complex *in_kernel = (fftwf_complex*)fftwf_malloc(sizeof(fftwf_complex) * krows * kcols);
-    fftwf_complex *out_image = (fftwf_complex*)fftwf_malloc(sizeof(fftwf_complex) * padded_rows * padded_cols);
+    output_image = convolve(image, kernel2D, 1, Padding::REPLICATE);
+    std::cout << "Output with REPLICATE padding:" << std::endl;
+    print2DVector(output_image);
 
-    // Prepare input data for FFT
-    for (int i = 0; i < padded_rows; ++i) {
-        for (int j = 0; j < padded_cols; ++j) {
-            in_image[i * padded_cols + j][0] = padded_image[i][j];
-            in_image[i * padded_cols + j][1] = 0;
-        }
-    }
+    output_image = convolve(image, kernel2D, 1, Padding::REFLECT);
+    std::cout << "Output with REFLECT padding:" << std::endl;
+    print2DVector(output_image);
 
-    for (int i = 0; i < krows; ++i) {
-        for (int j = 0; j < kcols; ++j) {
-            in_kernel[i * kcols + j][0] = kernel[i][j];
-            in_kernel[i * kcols + j][1] = 0;
-        }
-    }
-
-    // Perform FFT on the image and kernel
-    if (fftWrapper.performFFT2D(reinterpret_cast<float*>(in_image), in_image, padded_rows, padded_cols, Flags::FFTW_ESTIMATE) != FFTStatus::SUCCESS) {
-        throw std::runtime_error("FFT failed for image");
-    }
-    if (fftWrapper.performFFT2D(reinterpret_cast<float*>(in_kernel), in_kernel, krows, kcols, Flags::FFTW_ESTIMATE) != FFTStatus::SUCCESS) {
-        throw std::runtime_error("FFT failed for kernel");
-    }
-
-    // Perform element-wise multiplication in frequency domain
-    for (int i = 0; i < padded_rows * padded_cols; ++i) {
-        out_image[i][0] = in_image[i][0] * in_kernel[i][0] - in_image[i][1] * in_kernel[i][1];
-        out_image[i][1] = in_image[i][0] * in_kernel[i][1] + in_image[i][1] * in_kernel[i][0];
-    }
-
-    // Perform inverse FFT
-    if (fftWrapper.performInverseFFT2D(out_image, reinterpret_cast<float*>(in_image), padded_rows, padded_cols, Flags::FFTW_ESTIMATE) != FFTStatus::SUCCESS) {
-        throw std::runtime_error("Inverse FFT failed");
-    }
-
-    int output_rows = output_image.size();
-    int output_cols = output_image[0].size();
-    for (int i = 0; i < output_rows; ++i) {
-        for (int j = 0; j < output_cols; ++j) {
-            output_image[i][j] = in_image[(i * output_cols + j)] / (padded_rows * padded_cols);
-        }
-    }
-
-    fftwf_free(in_image);
-    fftwf_free(in_kernel);
-    fftwf_free(out_image);
+    return 0;
 }
