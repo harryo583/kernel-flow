@@ -2,6 +2,10 @@
 
 **kernel-flow** is a high-performance image processing library written in C++, designed for efficient use in both C++ and Python environments. The library excels in large-scale convolution operations, making it ideal for tasks such as those used in Convolutional Neural Networks (CNNs).
 
+**Status: Under Construction**
+
+This library is currently under development. Features are being implemented and tested. Please check back later for updates.
+
 ## Key Features
 
 ### 1. Fast Convolution Using Fast Fourier Transform (FFT)
