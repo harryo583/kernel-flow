@@ -1,26 +1,13 @@
-// /src/convolution.cpp
-
+#include "convolution.h"
+#include "FFTWrapper.h"
 #include <iostream>
 #include <vector>
 #include <complex>
 #include <stdexcept>
 #include <iomanip>
 #include <algorithm>
-#include <cstring>
-#include "FFTWrapper.h"
 
-// Padding enumeration (for boundary handling)
-enum class Padding {
-    VALID,      // no padding
-    ZERO,       // pads with zeros
-    CONSTANT,   // pads with a constant value
-    REPLICATE,  // pads by replicating the edge values
-    REFLECT,    // pads by reflecting border values
-};
-
-// -------------------- 1D Padding --------------------
-// Given an input vector, write it into output so that the “input”
- // occupies the center and the borders are filled according to the chosen type.
+// -------------------- Helper: 1D Padding --------------------
 static void pad1D(const std::vector<float>& input,
                   std::vector<float>& output,
                   Padding padding,
@@ -30,7 +17,7 @@ static void pad1D(const std::vector<float>& input,
     int pad_left = totalPad / 2;
     int pad_right = totalPad - pad_left;
     
-    // Copy the input into the center.
+    // Copy input into the center.
     std::copy(input.begin(), input.end(), output.begin() + pad_left);
     
     if (padding == Padding::ZERO) {
@@ -56,7 +43,7 @@ static void pad1D(const std::vector<float>& input,
     }
 }
 
-// -------------------- 2D Padding --------------------
+// -------------------- Helper: 2D Padding --------------------
 static void pad2D(const std::vector<std::vector<float>>& input, 
                   std::vector<std::vector<float>>& output, 
                   Padding padding, float pad_val = 0.0f) {
@@ -67,21 +54,19 @@ static void pad2D(const std::vector<std::vector<float>>& input,
     int pad_top = totalPadRows / 2;
     int pad_left = totalPadCols / 2;
     
-    // Copy the input into the center.
+    // Copy input into the center.
     for (int i = 0; i < rows; i++)
         for (int j = 0; j < cols; j++)
             output[pad_top + i][pad_left + j] = input[i][j];
     
     if (padding == Padding::ZERO) {
-        // Top and bottom rows
         for (int i = 0; i < pad_top; i++)
             std::fill(output[i].begin(), output[i].end(), 0.0f);
         for (int i = output.size() - pad_top; i < output.size(); i++)
             std::fill(output[i].begin(), output[i].end(), 0.0f);
-        // Left and right columns for the middle rows
         for (int i = pad_top; i < pad_top + rows; i++) {
             std::fill(output[i].begin(), output[i].begin()+pad_left, 0.0f);
-            std::fill(output[i].end()- (totalPadCols - pad_left), output[i].end(), 0.0f);
+            std::fill(output[i].end() - (totalPadCols - pad_left), output[i].end(), 0.0f);
         }
     }
     else if (padding == Padding::CONSTANT) {
@@ -91,19 +76,14 @@ static void pad2D(const std::vector<std::vector<float>>& input,
             std::fill(output[i].begin(), output[i].end(), pad_val);
         for (int i = pad_top; i < pad_top + rows; i++) {
             std::fill(output[i].begin(), output[i].begin()+pad_left, pad_val);
-            std::fill(output[i].end()- (totalPadCols - pad_left), output[i].end(), pad_val);
+            std::fill(output[i].end() - (totalPadCols - pad_left), output[i].end(), pad_val);
         }
     }
     else if (padding == Padding::REPLICATE) {
-        // Top rows: replicate first row of input
-        for (int i = 0; i < pad_top; i++) {
-            output[i] = output[pad_top]; // copy entire row
-        }
-        // Bottom rows: replicate last row of input
-        for (int i = output.size() - pad_top; i < output.size(); i++) {
+        for (int i = 0; i < pad_top; i++)
+            output[i] = output[pad_top];
+        for (int i = output.size() - pad_top; i < output.size(); i++)
             output[i] = output[pad_top + rows - 1];
-        }
-        // Left and right columns: replicate first and last column of each row
         for (int i = pad_top; i < pad_top + rows; i++) {
             for (int j = 0; j < pad_left; j++)
                 output[i][j] = output[i][pad_left];
@@ -112,15 +92,12 @@ static void pad2D(const std::vector<std::vector<float>>& input,
         }
     }
     else if (padding == Padding::REFLECT) {
-        // Top: reflect rows from below the border
         for (int i = 0; i < pad_top; i++) {
             output[i] = output[pad_top + (pad_top - i)];
         }
-        // Bottom: reflect from above the bottom border
         for (int i = 0; i < pad_top; i++) {
             output[output.size()-1-i] = output[output.size()-pad_top-1-i];
         }
-        // Left/right: reflect within each row
         for (int i = pad_top; i < pad_top + rows; i++) {
             for (int j = 0; j < pad_left; j++) {
                 output[i][j] = output[i][pad_left*2 - j];
@@ -136,8 +113,6 @@ static void pad2D(const std::vector<std::vector<float>>& input,
 }
 
 // -------------------- 1D Convolution via FFT --------------------
-// This function computes the full convolution (length = L1 + L2 - 1)
-// using FFT. The caller is responsible for cropping the result.
 static void convolve1D(const std::vector<float>& input_signal, 
                        const std::vector<float>& kernel,
                        std::vector<float>& full_conv,
@@ -146,13 +121,11 @@ static void convolve1D(const std::vector<float>& input_signal,
     int L2 = kernel.size();
     int fullSize = L1 + L2 - 1;
     
-    // Zero-pad both input and kernel to fullSize.
     std::vector<float> padded_signal(fullSize, 0.0f);
     std::vector<float> padded_kernel(fullSize, 0.0f);
     std::copy(input_signal.begin(), input_signal.end(), padded_signal.begin());
     std::copy(kernel.begin(), kernel.end(), padded_kernel.begin());
     
-    // The FFT (real-to-complex) output size is fullSize/2+1.
     int fftSize = fullSize / 2 + 1;
     std::vector<std::complex<float>> fft_signal(fftSize);
     std::vector<std::complex<float>> fft_kernel(fftSize);
@@ -172,46 +145,34 @@ static void convolve1D(const std::vector<float>& input_signal,
         throw std::runtime_error("Inverse FFT1D failed");
 }
 
-// -------------------- Overloaded 1D Convolve --------------------
-// This function calls the FFT convolution and then crops the result
-// to either “same” (output length equals input length) or “valid”.
+// -------------------- 1D Convolve --------------------
 std::vector<float> convolve(const std::vector<float>& signal,
                             const std::vector<float>& kernel,
-                            int stride, // not used
+                            int stride,
                             Padding padding,
                             float pad_val) {
-    // Determine how to pad the input before convolution.
     int inputSize = signal.size();
     int kernelSize = kernel.size();
     std::vector<float> signalToConv;
     
     if (padding != Padding::VALID) {
-        // For “same” convolution we extend the signal.
         int paddedSize = inputSize + kernelSize - 1;
         signalToConv.resize(paddedSize, 0.0f);
         pad1D(signal, signalToConv, padding, pad_val);
     } else {
-        // VALID: no extra padding.
         signalToConv = signal;
     }
     
-    // Compute full convolution (length = paddedSize + kernelSize - 1).
-    int paddedSize = signalToConv.size();
     std::vector<float> full_conv;
     FFTWrapper fftWrapper;
     convolve1D(signalToConv, kernel, full_conv, fftWrapper);
     
-    // Crop the result.
     std::vector<float> output;
     if (padding == Padding::VALID) {
-        // VALID: output length = inputSize - kernelSize + 1.
         int outSize = inputSize - kernelSize + 1;
-        // For VALID the “full” result (when no padding was applied)
-        // is of length = inputSize + kernelSize - 1 so we take indices [kernelSize-1, kernelSize-1+outSize].
         int start = kernelSize - 1;
         output.assign(full_conv.begin() + start, full_conv.begin() + start + outSize);
     } else {
-        // SAME: output length = inputSize.
         int outSize = inputSize;
         int start = (full_conv.size() - outSize) / 2;
         output.assign(full_conv.begin() + start, full_conv.begin() + start + outSize);
@@ -221,8 +182,6 @@ std::vector<float> convolve(const std::vector<float>& signal,
 }
 
 // -------------------- 2D Convolution via FFT --------------------
-// This helper computes the full 2D convolution between two matrices.
-// (The kernel is flipped inside to compute the convolution.)
 static void convolve2D(const std::vector<std::vector<float>>& input, 
                        const std::vector<std::vector<float>>& kernel,
                        std::vector<std::vector<float>>& full_conv,
@@ -234,19 +193,17 @@ static void convolve2D(const std::vector<std::vector<float>>& input,
     int fullRows = inRows + kRows - 1;
     int fullCols = inCols + kCols - 1;
     
-    // Zero-pad input into a full-sized array.
     std::vector<std::vector<float>> padded_input(fullRows, std::vector<float>(fullCols, 0.0f));
     for (int i = 0; i < inRows; i++)
         for (int j = 0; j < inCols; j++)
             padded_input[i][j] = input[i][j];
     
-    // Create a padded kernel by flipping it.
+    // Flip the kernel.
     std::vector<std::vector<float>> padded_kernel(fullRows, std::vector<float>(fullCols, 0.0f));
     for (int i = 0; i < kRows; i++)
         for (int j = 0; j < kCols; j++)
             padded_kernel[i][j] = kernel[kRows - i - 1][kCols - j - 1];
     
-    // Perform 2D FFT on both arrays.
     std::vector<std::vector<std::complex<float>>> fft_input;
     std::vector<std::vector<std::complex<float>>> fft_kernel;
     if (fftWrapper.performFFT2D(padded_input, fft_input, Flags::ESTIMATE) != FFTStatus::SUCCESS)
@@ -254,7 +211,7 @@ static void convolve2D(const std::vector<std::vector<float>>& input,
     if (fftWrapper.performFFT2D(padded_kernel, fft_kernel, Flags::ESTIMATE) != FFTStatus::SUCCESS)
         throw std::runtime_error("FFT2D failed");
     
-    int fftCols = fft_input[0].size(); // equals fullCols/2+1
+    int fftCols = fft_input[0].size();
     std::vector<std::vector<std::complex<float>>> fft_product(fullRows, std::vector<std::complex<float>>(fftCols));
     for (int i = 0; i < fullRows; i++) {
         for (int j = 0; j < fftCols; j++) {
@@ -266,12 +223,10 @@ static void convolve2D(const std::vector<std::vector<float>>& input,
         throw std::runtime_error("Inverse FFT2D failed");
 }
 
-// -------------------- Overloaded 2D Convolve --------------------
-// This function pads the input image if needed, calls the FFT convolution,
-// and then crops the “full convolution” to produce either “same” or “valid” output.
+// -------------------- 2D Convolve --------------------
 std::vector<std::vector<float>> convolve(const std::vector<std::vector<float>>& image,
                                          const std::vector<std::vector<float>>& kernel,
-                                         int stride, // not used
+                                         int stride,
                                          Padding padding,
                                          float pad_val) {
     int imgRows = image.size();
@@ -281,24 +236,20 @@ std::vector<std::vector<float>> convolve(const std::vector<std::vector<float>>& 
     
     std::vector<std::vector<float>> inputToConv;
     if (padding != Padding::VALID) {
-        // For same padding, pad the image so that the output is the same size.
         int paddedRows = imgRows + kRows - 1;
         int paddedCols = imgCols + kCols - 1;
         inputToConv.resize(paddedRows, std::vector<float>(paddedCols, 0.0f));
         pad2D(image, inputToConv, padding, pad_val);
-    }
-    else {
+    } else {
         inputToConv = image;
     }
     
-    // Compute the full 2D convolution.
     std::vector<std::vector<float>> full_conv;
     FFTWrapper fftWrapper;
     convolve2D(inputToConv, kernel, full_conv, fftWrapper);
     
     std::vector<std::vector<float>> output;
     if (padding == Padding::VALID) {
-        // VALID: output size = (imgRows - kRows + 1) x (imgCols - kCols + 1)
         int outRows = imgRows - kRows + 1;
         int outCols = imgCols - kCols + 1;
         output.resize(outRows, std::vector<float>(outCols, 0.0f));
@@ -309,9 +260,7 @@ std::vector<std::vector<float>> convolve(const std::vector<std::vector<float>>& 
                 output[i][j] = full_conv[i + startRow][j + startCol];
             }
         }
-    }
-    else {
-        // SAME: output size = original image size.
+    } else {
         int outRows = imgRows;
         int outCols = imgCols;
         output.resize(outRows, std::vector<float>(outCols, 0.0f));
@@ -342,16 +291,17 @@ void print2DVector(const std::vector<std::vector<float>>& mat) {
     }
 }
 
-// -------------------- Main Test --------------------
+// -------------------- Test Main (Optional) --------------------
+// Define CONVOLUTION_TEST (for example via -DCONVOLUTION_TEST at compile time)
+// to compile and run this test.
+#ifdef CONVOLUTION_TEST
 int main() {
-    // Test 1D Convolution
+    // 1D Convolution Test.
     std::vector<float> signal = {1, 2, 3, 4};
     std::vector<float> kernel = {1, 0, -1};
     
     std::cout << "1D Convolution Test:" << std::endl;
-    std::vector<float> output_signal;
-    
-    output_signal = convolve(signal, kernel, 1, Padding::ZERO);
+    auto output_signal = convolve(signal, kernel, 1, Padding::ZERO);
     std::cout << "Output with ZERO padding:" << std::endl;
     print1DVector(output_signal);
     
@@ -367,7 +317,7 @@ int main() {
     std::cout << "Output with REFLECT padding:" << std::endl;
     print1DVector(output_signal);
     
-    // Test 2D Convolution
+    // 2D Convolution Test.
     std::vector<std::vector<float>> image = {
         {1, 2, 3},
         {4, 5, 6},
@@ -379,9 +329,7 @@ int main() {
     };
     
     std::cout << "\n2D Convolution Test:" << std::endl;
-    std::vector<std::vector<float>> output_image;
-    
-    output_image = convolve(image, kernel2D, 1, Padding::ZERO);
+    auto output_image = convolve(image, kernel2D, 1, Padding::ZERO);
     std::cout << "Output with ZERO padding:" << std::endl;
     print2DVector(output_image);
     
@@ -399,3 +347,4 @@ int main() {
     
     return 0;
 }
+#endif
