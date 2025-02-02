@@ -1,5 +1,3 @@
-// /src/FFTWrapper.h
-
 #ifndef FFTWRAPPER_H
 #define FFTWRAPPER_H
 
@@ -7,7 +5,7 @@
 #include <complex>
 #include <fftw3.h>
 
-// Flags for FFTW plans.
+// FFTW planning flags.
 enum class Flags {
     ESTIMATE = FFTW_ESTIMATE,
     MEASURE  = FFTW_MEASURE
@@ -29,22 +27,22 @@ public:
     FFTWrapper();
     ~FFTWrapper();
     
-    // 1D FFT (real-to-complex)
+    // Perform a 1D real-to-complex FFT.
     FFTStatus performFFT1D(const std::vector<float>& input,
                            std::vector<std::complex<float>>& output,
                            Flags flags);
     
-    // 1D Inverse FFT (complex-to-real)
+    // Perform a 1D complex-to-real inverse FFT.
     FFTStatus performInverseFFT1D(const std::vector<std::complex<float>>& input,
                                   std::vector<float>& output,
                                   Flags flags);
     
-    // 2D FFT (real-to-complex)
+    // Perform a 2D real-to-complex FFT.
     FFTStatus performFFT2D(const std::vector<std::vector<float>>& input,
                            std::vector<std::vector<std::complex<float>>>& output,
                            Flags flags);
     
-    // 2D Inverse FFT (complex-to-real)
+    // Perform a 2D complex-to-real inverse FFT.
     FFTStatus performInverseFFT2D(const std::vector<std::vector<std::complex<float>>>& input,
                                   std::vector<std::vector<float>>& output,
                                   Flags flags);

@@ -1,11 +1,9 @@
-// /src/FFTWrapper.cpp
-
 #include "FFTWrapper.h"
 #include <fftw3.h>
 #include <stdexcept>
 #include <iostream>
 
-// Constructor
+// Constructor: initialize plan pointers.
 FFTWrapper::FFTWrapper() {
     forwardPlan1D = nullptr;
     inversePlan1D = nullptr;
@@ -13,12 +11,12 @@ FFTWrapper::FFTWrapper() {
     inversePlan2D = nullptr;
 }
 
-// Destructor: destroy any remaining plans.
+// Destructor: destroy any active FFTW plans.
 FFTWrapper::~FFTWrapper() {
-    if (forwardPlan1D) fftwf_destroy_plan(forwardPlan1D);
-    if (inversePlan1D) fftwf_destroy_plan(inversePlan1D);
-    if (forwardPlan2D) fftwf_destroy_plan(forwardPlan2D);
-    if (inversePlan2D) fftwf_destroy_plan(inversePlan2D);
+    if (forwardPlan1D)  fftwf_destroy_plan(forwardPlan1D);
+    if (inversePlan1D)  fftwf_destroy_plan(inversePlan1D);
+    if (forwardPlan2D)  fftwf_destroy_plan(forwardPlan2D);
+    if (inversePlan2D)  fftwf_destroy_plan(inversePlan2D);
 }
 
 // ------------------- 1D FFT -------------------
@@ -27,7 +25,8 @@ FFTStatus FFTWrapper::performFFT1D(const std::vector<float>& input,
                                    Flags flags) {
     int size = input.size();
     output.resize(size / 2 + 1);
-    forwardPlan1D = fftwf_plan_dft_r2c_1d(size, const_cast<float*>(input.data()),
+    forwardPlan1D = fftwf_plan_dft_r2c_1d(size,
+                                          const_cast<float*>(input.data()),
                                           reinterpret_cast<fftwf_complex*>(output.data()),
                                           static_cast<unsigned int>(flags));
     if (!forwardPlan1D)
@@ -51,6 +50,7 @@ FFTStatus FFTWrapper::performInverseFFT1D(const std::vector<std::complex<float>>
     fftwf_execute(inversePlan1D);
     fftwf_destroy_plan(inversePlan1D);
     inversePlan1D = nullptr;
+    // Normalize the result.
     for (auto& val : output)
         val /= size;
     return FFTStatus::SUCCESS;
@@ -63,10 +63,10 @@ FFTStatus FFTWrapper::performFFT2D(const std::vector<std::vector<float>>& input,
     int rows = input.size();
     int cols = input[0].size();
     output.resize(rows, std::vector<std::complex<float>>(cols / 2 + 1));
-    std::vector<float> flatInput(rows * cols);
-    std::vector<std::complex<float>> flatOutput(rows * (cols / 2 + 1));
     
     // Flatten the 2D input.
+    std::vector<float> flatInput(rows * cols);
+    std::vector<std::complex<float>> flatOutput(rows * (cols / 2 + 1));
     for (int i = 0; i < rows; ++i)
         std::copy(input[i].begin(), input[i].end(), flatInput.begin() + i * cols);
     
@@ -79,7 +79,7 @@ FFTStatus FFTWrapper::performFFT2D(const std::vector<std::vector<float>>& input,
     fftwf_destroy_plan(forwardPlan2D);
     forwardPlan2D = nullptr;
     
-    // Un-flatten into 2D.
+    // Un-flatten into the 2D output.
     int fftCols = cols / 2 + 1;
     for (int i = 0; i < rows; ++i)
         std::copy(flatOutput.begin() + i * fftCols,
@@ -93,12 +93,12 @@ FFTStatus FFTWrapper::performInverseFFT2D(const std::vector<std::vector<std::com
                                           Flags flags) {
     int rows = input.size();
     int fftCols = input[0].size();
-    int realCols = (fftCols - 1) * 2;  // original number of columns
+    int realCols = (fftCols - 1) * 2;  // original real dimension.
     output.resize(rows, std::vector<float>(realCols));
     
+    // Flatten the 2D input.
     std::vector<std::complex<float>> flatInput(rows * fftCols);
     std::vector<float> flatOutput(rows * realCols);
-    
     for (int i = 0; i < rows; ++i)
         std::copy(input[i].begin(), input[i].end(), flatInput.begin() + i * fftCols);
     
@@ -112,6 +112,7 @@ FFTStatus FFTWrapper::performInverseFFT2D(const std::vector<std::vector<std::com
     fftwf_destroy_plan(inversePlan2D);
     inversePlan2D = nullptr;
     
+    // Copy back into the 2D output.
     for (int i = 0; i < rows; ++i)
         std::copy(flatOutput.begin() + i * realCols,
                   flatOutput.begin() + (i + 1) * realCols,
